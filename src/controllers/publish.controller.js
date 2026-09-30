@@ -14,7 +14,8 @@ import { normalizeThreadsUrl } from '../utils/threads.js';
  *   admin → POST   /admin/publish-requests/:id/reject    status 'rejected' with a reason
  *
  * publishRequests/{uid}_{designId} holds one request per design: a new submission replaces the old one.
- * A user has one site, so they may have only one request waiting at a time, across all their designs.
+ * A user has one site, so they may have only one request waiting at a time, across all their designs:
+ * submitting again replaces (cancels) the one still waiting.
  * Clients never touch this collection directly (no Firestore rule allows it); everything goes through here.
  */
 
@@ -28,10 +29,14 @@ const requestId = (uid, designId) => `${uid}_${designId}`;
  * The user's request that is still waiting or being deployed, or null. Filtered here rather than with a
  * second `where`, which would need a composite index; a user only has a handful of requests.
  */
-async function openRequestOf(uid, t) {
+async function openRequestsOf(uid, t) {
   const q = requests().where('uid', '==', uid).select('designId', 'status', 'title');
   const snap = await (t ? t.get(q) : q.get());
-  const doc = snap.docs.find((d) => OPEN.includes(d.get('status')));
+  return snap.docs.filter((d) => OPEN.includes(d.get('status')));
+}
+
+async function openRequestOf(uid, t) {
+  const [doc] = await openRequestsOf(uid, t);
   return doc ? { designId: doc.get('designId'), status: doc.get('status'), title: doc.get('title') } : null;
 }
 
@@ -84,15 +89,16 @@ export const requestPublish = async (req, res) => {
 
   const ref = requests().doc(requestId(uid, designId));
   const data = await db.runTransaction(async (t) => {
-    // Checked inside the transaction so two quick submissions for different designs can't both pass.
-    const open = await openRequestOf(uid, t);
-    if (open?.designId === designId) throw httpError(409, 'Trang này đang chờ duyệt, bạn không cần gửi lại');
-    if (open) {
-      throw httpError(
-        409,
-        `Bạn đang có yêu cầu xuất bản trang “${open.title}” chờ duyệt. Mỗi tài khoản chỉ có một trang web, ` +
-          'hãy huỷ yêu cầu đó trước khi gửi trang khác.',
-      );
+    // A new submission replaces the one still waiting (this design's is overwritten below, another
+    // design's is cancelled), so the user only ever has one request in the queue. Read inside the
+    // transaction so two quick submissions can't both stay open.
+    const open = await openRequestsOf(uid, t);
+    const deploying = open.find((d) => d.get('status') === STATUS.deploying);
+    if (deploying) {
+      throw httpError(409, `Trang “${deploying.get('title')}” đang được triển khai, hãy đợi xong rồi gửi lại.`);
+    }
+    for (const d of open) {
+      if (d.id !== ref.id) t.update(d.ref, { status: 'cancelled', design: FieldValue.delete(), replacedBy: ref.id });
     }
 
     const next = {
