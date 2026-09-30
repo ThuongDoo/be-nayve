@@ -1,0 +1,25 @@
+{
+  "name": "nayva-be",
+  "version": "1.0.0",
+  "description": "Nayva backend - Express.js",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "setup:cors": "node scripts/setup-storage-cors.js",
+    "seed:templates": "node scripts/seed-sample-templates.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.3",
+    "express": "^5.2.1",
+    "firebase-admin": "^14.5.0",
+    "helmet": "^8.3.0",
+    "morgan": "^1.12.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
