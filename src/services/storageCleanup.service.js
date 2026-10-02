@@ -53,15 +53,32 @@ async function templateRefs(into) {
   return into;
 }
 
+/**
+ * Other users' designs this user has edited through a share link. Files they uploaded there live in
+ * their own folders, so those designs count as using them too. users/{uid}/sharedEdits/{id} =
+ * { ownerUid, designId }, written by the editor when a shared design is opened. Returns snapshots of
+ * the designs that still exist, shared or not any more: what was uploaded there is still shown.
+ */
+export async function sharedDesignsOf(uid) {
+  const edits = await db.collection(`users/${uid}/sharedEdits`).get();
+  const refs = edits.docs
+    .filter((d) => typeof d.get('ownerUid') === 'string' && typeof d.get('designId') === 'string')
+    .map((d) => db.doc(`users/${d.get('ownerUid')}/designs/${d.get('designId')}`));
+  if (!refs.length) return [];
+  return (await db.getAll(...refs)).filter((d) => d.exists);
+}
+
 /** Paths that must be kept for this user. */
 async function userRefs(uid) {
   const used = new Set();
-  const [designs, requests] = await Promise.all([
+  const [designs, requests, shared] = await Promise.all([
     db.collection(`users/${uid}/designs`).get(),
     db.collection('publishRequests').where('uid', '==', uid).get(),
+    sharedDesignsOf(uid),
     templateRefs(used),
   ]);
   designs.docs.forEach((d) => pathsInDesign(d.data(), used));
+  shared.forEach((d) => pathsInDesign(d.data(), used));
   requests.docs.filter((d) => OPEN_REQUEST.includes(d.get('status'))).forEach((d) => pathsInDesign(d.get('design'), used));
   return used;
 }

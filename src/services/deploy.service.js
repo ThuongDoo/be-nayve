@@ -21,6 +21,13 @@ import { httpError } from '../utils/httpError.js';
  */
 export const siteRef = (uid) => db.doc(`sites/${uid}`);
 
+/**
+ * What is kept of a site taken down because its design was deleted (takeDownSite): its end date,
+ * extensions and admin marks, so time already paid for still counts when the user publishes again.
+ * retiredSites/{uid} = { designId, expiresAt, extensions, starred, labels, retiredAt }.
+ */
+const retiredRef = (uid) => db.doc(`retiredSites/${uid}`);
+
 export const TRIAL_DAYS = 3;
 const DAY_MS = 86_400_000;
 
@@ -100,9 +107,11 @@ export async function deploySite(uid, designId, design, name) {
   const domain = fullDomain(name);
   const ref = siteRef(uid);
   const current = (await ref.get()).data();
+  // Dates and marks carry over from the live site, or from one taken down when its design was deleted.
+  const previous = current ?? (await retiredRef(uid).get()).data();
   // A trial from now, unless an admin already extended the site further (a paid site keeps its date,
   // even when another design takes its place).
-  const expiresAt = Timestamp.fromMillis(Math.max(current?.expiresAt?.toMillis() ?? 0, Date.now() + TRIAL_DAYS * DAY_MS));
+  const expiresAt = Timestamp.fromMillis(Math.max(previous?.expiresAt?.toMillis() ?? 0, Date.now() + TRIAL_DAYS * DAY_MS));
 
   let projectName;
   let replaced = false;
@@ -123,7 +132,8 @@ export async function deploySite(uid, designId, design, name) {
 
   // The first deployment creates the project, so the domain can only be attached afterwards.
   const d = await deployStatic(projectName, files);
-  await (replaced ? attachFreedDomain : addProjectDomain)(projectName, domain);
+  // A site taken down moments ago (takeDownSite) may still hold the domain on Vercel, like a replaced one.
+  await (replaced || (!current && previous) ? attachFreedDomain : addProjectDomain)(projectName, domain);
   const record = {
     projectName,
     designId,
@@ -136,13 +146,38 @@ export async function deploySite(uid, designId, design, name) {
     expired: false,
     expiredAt: null,
     design: { page: design.page, elements: design.elements },
-    extensions: current?.extensions ?? [],
+    extensions: previous?.extensions ?? [],
     // Admin marks (siteMarks.service.js) follow the user, whichever design is live.
-    starred: current?.starred ?? false,
-    labels: current?.labels ?? [],
+    starred: previous?.starred ?? false,
+    labels: previous?.labels ?? [],
   };
   await ref.set(record);
+  if (!current && previous) await retiredRef(uid).delete();
   return { ...serialize({ ...record, deployedAt: Timestamp.now() }), missingImages: missing };
+}
+
+/**
+ * Takes the user's site off the internet because `designId`, the design it shows, is being deleted:
+ * the domain is detached and the Vercel project deleted with all its deployments. The domain name stays
+ * the user's, and time paid for is kept for their next publish (retiredRef). Resolves to whether there
+ * was a site for this design. Call while holding the user's site lock.
+ */
+export async function takeDownSite(uid, designId) {
+  const ref = siteRef(uid);
+  const site = (await ref.get()).data();
+  if (!site || site.designId !== designId) return false;
+  await removeProjectDomain(site.projectName, site.domain);
+  await deleteProject(site.projectName);
+  await retiredRef(uid).set({
+    designId,
+    expiresAt: site.expiresAt ?? null,
+    extensions: site.extensions ?? [],
+    starred: site.starred ?? false,
+    labels: site.labels ?? [],
+    retiredAt: FieldValue.serverTimestamp(),
+  });
+  await ref.delete();
+  return true;
 }
 
 /** Moves a deployed site from one name to another. Does nothing on Vercel if the user never published. */

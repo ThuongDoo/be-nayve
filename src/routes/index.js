@@ -19,6 +19,7 @@ import {
   listPublishRequests,
   rejectPublishRequest,
   requestPublish,
+  takeDownDesignSite,
 } from '../controllers/publish.controller.js';
 import {
   cleanupAllStorage,
@@ -64,6 +65,7 @@ router.post('/admin/storage/cleanup', ...admin, cleanupAllStorage);
 router.post('/designs/:designId/publish', requireAuth, requestPublish);
 router.get('/designs/:designId/publish', requireAuth, getPublishStatus);
 router.delete('/designs/:designId/publish', requireAuth, cancelPublish);
+router.delete('/designs/:designId/site', requireAuth, takeDownDesignSite);
 
 router.get('/admin/publish-requests', ...admin, listPublishRequests);
 router.get('/admin/publish-requests/:id', ...admin, getPublishRequest);

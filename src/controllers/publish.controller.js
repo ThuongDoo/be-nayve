@@ -1,6 +1,6 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../config/firebase.js';
-import { deploySite, getSiteStatus, renderDesign } from '../services/deploy.service.js';
+import { deploySite, getSiteStatus, renderDesign, takeDownSite } from '../services/deploy.service.js';
 import { getUserDomain } from '../services/domain.service.js';
 import { withSiteLock } from '../services/siteLock.service.js';
 import { httpError } from '../utils/httpError.js';
@@ -78,11 +78,11 @@ export const requestPublish = async (req, res) => {
   ]);
   if (!snap.exists) throw httpError(404, 'Không tìm thấy thiết kế');
   if (!userDomain.name) throw httpError(409, 'Hãy chọn tên miền cho trang web trước khi xuất bản');
-  // Admins contact publishers through Threads: asked with the first request, then kept on the profile.
+  // A Threads link is optional (the publish dialog no longer asks for one): one sent is kept on the
+  // profile, and one saved earlier is still passed on to admins.
   const sentThreads = req.body?.threadsUrl;
   const threadsUrl = sentThreads ? normalizeThreadsUrl(sentThreads) : savedThreads;
   if (sentThreads && !threadsUrl) throw httpError(400, 'Link Threads không hợp lệ (ví dụ: https://www.threads.com/@tentaikhoan)');
-  if (!threadsUrl) throw httpError(400, 'Hãy nhập link tài khoản Threads để quản trị viên liên hệ với bạn');
   const { page, elements } = snap.data();
   const design = { page, elements };
   renderDesign(design); // Reject unusable data now rather than when the admin approves it.
@@ -117,7 +117,7 @@ export const requestPublish = async (req, res) => {
       lastError: null,
     };
     t.set(ref, next);
-    if (threadsUrl !== savedThreads) t.set(db.doc(`users/${uid}`), { threadsUrl }, { merge: true });
+    if (threadsUrl && threadsUrl !== savedThreads) t.set(db.doc(`users/${uid}`), { threadsUrl }, { merge: true });
     return next;
   });
 
@@ -158,6 +158,26 @@ export const cancelPublish = async (req, res) => {
     t.update(ref, { status: 'cancelled', design: FieldValue.delete() });
   });
   res.status(204).end();
+};
+
+/**
+ * Called before the user deletes a design: takes its site off Vercel if it is the live one, and cancels
+ * a request of it still waiting for review (approving that would publish the deleted design).
+ * Answers `{ removed }`: whether a site was taken down.
+ */
+export const takeDownDesignSite = async (req, res) => {
+  const { uid } = req.user;
+  const { designId } = req.params;
+  const removed = await withSiteLock(uid, { action: 'takedown', by: uid }, async () => {
+    const ref = requests().doc(requestId(uid, designId));
+    await db.runTransaction(async (t) => {
+      const status = (await t.get(ref)).get('status');
+      if (status === STATUS.deploying) throw httpError(409, 'Trang này đang được triển khai, hãy đợi xong rồi xoá.');
+      if (status === STATUS.pending) t.update(ref, { status: 'cancelled', design: FieldValue.delete() });
+    });
+    return takeDownSite(uid, designId);
+  });
+  res.json({ removed });
 };
 
 /** Request fields without the (large) design snapshot, for lists. */

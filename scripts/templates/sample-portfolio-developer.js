@@ -54,7 +54,7 @@ export default function developer() {
   ;[head, y] = sectionHead(1050, 'DỰ ÁN', 'Một vài dự án gần đây', { color: ink, labelColor: accent, intro: 'Mã nguồn mở và sản phẩm thật cho khách hàng.', introColor: muted });
   els.push(...head);
   ;[
-    ['Web Siêu Lỏ', 'Trang web thiết kế web kéo thả, lưu trên Firebase, xuất bản một chạm.'],
+    ['Nayva', 'Trang web thiết kế web kéo thả, lưu trên Firebase, xuất bản một chạm.'],
     ['Sổ Chi Tiêu', 'Ứng dụng quản lý chi tiêu cá nhân, biểu đồ theo tháng, chạy offline.'],
     ['Bếp Nhà Mình', 'Website bán đồ ăn nhà làm, đặt món và thanh toán trực tuyến.'],
     ['Lịch Họp Nhanh', 'Công cụ đặt lịch họp cho nhóm nhỏ, đồng bộ Google Calendar.'],
@@ -107,7 +107,7 @@ export default function developer() {
     button('raised', at(W / 2 - 200, 3100, 190, 54), 'hello@quocbao.dev', { fontSize: 15 }, { href: 'mailto:hello@quocbao.dev' }),
     button('outline', at(W / 2 + 10, 3100, 190, 54), 'Gọi 0901 234 567', { color: '#ffffff', borderColor: '#ffffff', fontSize: 15 }, { href: 'tel:0901234567' }),
     ...socials(centred(4, 36, 16), 3264, ink, 36, 16, ['facebook', 'zaloApp', 'threads', 'github']),
-    text('caption', at(X, 3320, CW, 22), '© 2026 Trần Quốc Bảo · Làm bằng Web Siêu Lỏ', { textAlign: 'center' }),
+    text('caption', at(X, 3320, CW, 22), '© 2026 Trần Quốc Bảo · Làm bằng Nayva', { textAlign: 'center' }),
   );
 
   return {

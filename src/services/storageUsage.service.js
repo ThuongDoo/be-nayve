@@ -1,7 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { bucket, db } from '../config/firebase.js';
 import { httpError } from '../utils/httpError.js';
-import { OPEN_REQUEST, USER_FOLDERS, pathsInDesign } from './storageCleanup.service.js';
+import { OPEN_REQUEST, USER_FOLDERS, pathsInDesign, sharedDesignsOf } from './storageCleanup.service.js';
 
 /**
  * Per-user upload quota. Usage is measured from what is actually in Storage (users/{uid}/images,
@@ -43,15 +43,16 @@ export async function refreshUsage(uid) {
  * review still contains it.
  */
 export async function storageDetails(uid) {
-  const [files, designs, requests] = await Promise.all([
+  const [files, designs, requests, shared] = await Promise.all([
     listUserFiles(uid),
     db.collection(`users/${uid}/designs`).get(),
     db.collection('publishRequests').where('uid', '==', uid).get(),
+    sharedDesignsOf(uid),
   ]);
 
   const usedIn = new Map();
-  for (const d of designs.docs) {
-    const title = d.get('page')?.title || 'Chưa đặt tên';
+  for (const d of [...designs.docs, ...shared]) {
+    const title = (d.get('page')?.title || 'Chưa đặt tên') + (d.ref.parent.parent.id === uid ? '' : ' (được chia sẻ)');
     for (const path of pathsInDesign(d.data(), new Set())) {
       if (!usedIn.has(path)) usedIn.set(path, []);
       usedIn.get(path).push({ designId: d.id, title });

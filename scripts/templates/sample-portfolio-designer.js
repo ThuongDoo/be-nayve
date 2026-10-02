@@ -128,7 +128,7 @@ export default function designer() {
     button('gradient', at(W / 2 - 206, 3420, 200, 54), 'Gửi email', { background: grad }, { href: 'mailto:hello@minhan.design' }),
     button('outline', at(W / 2 + 6, 3420, 200, 54), 'Gọi điện', { radius: 999, color: '#e2e8f0', borderColor: '#e2e8f0' }, { href: 'tel:0901234567' }),
     ...socials(centred(4, 40, 16), 3504, '#c7d2fe', 40, 16, ['facebook', 'zaloApp', 'threads', 'linkedin']),
-    text('caption', at(X, 3570, CW, 22), '© 2026 Minh An · Thiết kế bằng Web Siêu Lỏ', { color: '#64748b', textAlign: 'center' }),
+    text('caption', at(X, 3570, CW, 22), '© 2026 Minh An · Thiết kế bằng Nayva', { color: '#64748b', textAlign: 'center' }),
   );
 
   return {
