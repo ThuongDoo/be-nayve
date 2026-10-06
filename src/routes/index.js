@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getHealth } from '../controllers/health.controller.js';
 import { getMySite } from '../controllers/deploy.controller.js';
+import { getMyAdminSite, publishMyAdminSite, takeDownMyAdminSite } from '../controllers/adminSite.controller.js';
 import {
   approveDomainRequest,
   cancelMyDomainChange,
@@ -66,6 +67,12 @@ router.post('/designs/:designId/publish', requireAuth, requestPublish);
 router.get('/designs/:designId/publish', requireAuth, getPublishStatus);
 router.delete('/designs/:designId/publish', requireAuth, cancelPublish);
 router.delete('/designs/:designId/site', requireAuth, takeDownDesignSite);
+
+// Admins skip all of that: any number of their designs go live at once, each at its own domain, with
+// no review and no expiry.
+router.get('/designs/:designId/admin-site', ...admin, getMyAdminSite);
+router.put('/designs/:designId/admin-site', ...admin, publishMyAdminSite);
+router.delete('/designs/:designId/admin-site', ...admin, takeDownMyAdminSite);
 
 router.get('/admin/publish-requests', ...admin, listPublishRequests);
 router.get('/admin/publish-requests/:id', ...admin, getPublishRequest);

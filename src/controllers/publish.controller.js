@@ -1,6 +1,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { db } from '../config/firebase.js';
 import { deploySite, getSiteStatus, renderDesign, takeDownSite } from '../services/deploy.service.js';
+import { listAdminSitesOf, takeDownAdminSite } from '../services/adminSite.service.js';
 import { getUserDomain } from '../services/domain.service.js';
 import { withSiteLock } from '../services/siteLock.service.js';
 import { httpError } from '../utils/httpError.js';
@@ -162,13 +163,15 @@ export const cancelPublish = async (req, res) => {
 
 /**
  * Called before the user deletes a design: takes its site off Vercel if it is the live one, and cancels
- * a request of it still waiting for review (approving that would publish the deleted design).
+ * a request of it still waiting for review (approving that would publish the deleted design). An
+ * admin's own site of the design (adminSite.service.js) goes too.
  * Answers `{ removed }`: whether a site was taken down.
  */
 export const takeDownDesignSite = async (req, res) => {
   const { uid } = req.user;
   const { designId } = req.params;
-  const removed = await withSiteLock(uid, { action: 'takedown', by: uid }, async () => {
+  const removedAdmin = await takeDownAdminSite(uid, designId);
+  const removedUser = await withSiteLock(uid, { action: 'takedown', by: uid }, async () => {
     const ref = requests().doc(requestId(uid, designId));
     await db.runTransaction(async (t) => {
       const status = (await t.get(ref)).get('status');
@@ -177,7 +180,7 @@ export const takeDownDesignSite = async (req, res) => {
     });
     return takeDownSite(uid, designId);
   });
-  res.json({ removed });
+  res.json({ removed: removedAdmin || removedUser });
 };
 
 /** Request fields without the (large) design snapshot, for lists. */
@@ -185,16 +188,18 @@ const LIST_FIELDS = ['uid', 'designId', 'status', 'title', 'user', 'domain', 'co
 
 /**
  * For the home screen: `{ requests: { [designId]: request }, site }`, i.e. every design's latest publish
- * request and the live site (`site.designId` is the design being shown), in one call.
+ * request and the live site (`site.designId` is the design being shown), in one call. `adminSites`
+ * maps design ids to an admin's own sites (adminSite.service.js); it is empty for everyone else.
  */
 export const getMyPublishOverview = async (req, res) => {
   const { uid } = req.user;
-  const [snap, site] = await Promise.all([
+  const [snap, site, adminSites] = await Promise.all([
     requests().where('uid', '==', uid).select(...LIST_FIELDS).get(),
     getSiteStatus(uid),
+    listAdminSitesOf(uid),
   ]);
   const byDesign = Object.fromEntries(snap.docs.map((d) => [d.get('designId'), serialize(d.id, d.data())]));
-  res.json({ requests: byDesign, site });
+  res.json({ requests: byDesign, site, adminSites });
 };
 
 // ---------------------------------------------------------------- admin

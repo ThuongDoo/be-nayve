@@ -18,9 +18,12 @@ const requester = ({ email = null, name = null, picture = null }) => ({ email, n
 
 // ---------------------------------------------------------------- user
 
-/** `GET /domains/check?name=…` → `{ name, domain, available, reason }`. */
+/**
+ * `GET /domains/check?name=…[&designId=…]` → `{ name, domain, available, reason }`. With `designId`,
+ * the name is checked for that design's own site (admins, see adminSite.service.js).
+ */
 export const checkDomain = async (req, res) => {
-  res.json(await checkAvailability(req.user.uid, req.query.name));
+  res.json(await checkAvailability(req.user.uid, req.query.name, req.query.designId || null));
 };
 
 export const getMyDomain = async (req, res) => {

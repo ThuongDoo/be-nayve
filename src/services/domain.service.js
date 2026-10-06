@@ -49,17 +49,22 @@ export function invalidReason(name) {
 
 /**
  * `{ name, domain, available, reason }`. Taken means reserved by another user in Firestore, or (for
- * *.vercel.app) already used by some other Vercel project. The user's own names count as available.
+ * *.vercel.app) already used by some other Vercel project. The user's own names count as available
+ * for the same use: their user domain when `designId` is null, or the site of that design for an admin
+ * (adminSite.service.js reserves those with the design id).
  */
-export async function checkAvailability(uid, raw) {
+export async function checkAvailability(uid, raw, designId = null) {
   const name = cleanName(raw);
   const base = { name, domain: fullDomain(name) };
   const reason = invalidReason(name);
   if (reason) return { ...base, available: false, reason };
 
-  const owner = (await domainsCol().doc(name).get()).get('uid');
-  if (owner && owner !== uid) return { ...base, available: false, reason: 'Tên miền này đã có người dùng' };
-  if (!owner && config.publish.rootDomain === 'vercel.app' && !(await isVercelAppHostFree(base.domain))) {
+  const taken = (await domainsCol().doc(name).get()).data();
+  if (taken && taken.uid !== uid) return { ...base, available: false, reason: 'Tên miền này đã có người dùng' };
+  if (taken && (taken.designId ?? null) !== designId) {
+    return { ...base, available: false, reason: 'Bạn đang dùng tên miền này cho một trang khác' };
+  }
+  if (!taken && config.publish.rootDomain === 'vercel.app' && !(await isVercelAppHostFree(base.domain))) {
     return { ...base, available: false, reason: 'Tên miền này đã có người dùng trên Vercel' };
   }
   return { ...base, available: true, reason: null };
@@ -104,7 +109,7 @@ export async function claimDomain(uid, raw, user) {
     const [taken, mineSnap] = await Promise.all([t.get(nameRef), t.get(mineRef)]);
     const mine = mineSnap.data() ?? {};
     // Checked again inside the transaction: someone may have taken it since checkAvailability.
-    if (taken.exists && taken.get('uid') !== uid) throw httpError(409, 'Tên miền này vừa có người khác chọn');
+    if (taken.exists && (taken.get('uid') !== uid || taken.get('designId'))) throw httpError(409, 'Tên miền này vừa có người khác chọn');
     if (mine.domain === name) throw httpError(409, 'Đây đã là tên miền của bạn');
     if (mine.status === DOMAIN_STATUS.pending || mine.status === DOMAIN_STATUS.processing) {
       throw httpError(409, 'Bạn đang có một yêu cầu đổi tên miền chờ duyệt. Hãy huỷ nó trước khi gửi yêu cầu mới.');
