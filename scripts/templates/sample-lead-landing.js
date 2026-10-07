@@ -58,7 +58,6 @@ export default function leadLanding() {
     title(at(732, HERO_FORM + 30, 360, 34), 'Nhận bảng giá & ưu đãi', ink, 24, { letterSpacing: 0 }),
     para(at(732, HERO_FORM + 70, 360, 48), 'Để lại thông tin, chuyên viên gửi bảng giá và mặt bằng trong 15 phút.', soft, { fontSize: 14, lineHeight: 1.6 }),
     form(at(732, HERO_FORM + 132, 356, 440), {
-      formName: 'Nhận bảng giá Aurora Riverside',
       submitText: 'Nhận bảng giá ngay',
       successText: 'Cảm ơn bạn! Chuyên viên sẽ gọi lại trong 15 phút.',
       fields: [
@@ -117,7 +116,6 @@ export default function leadLanding() {
     form(
       at(676, VISIT + 36, 408, 460),
       {
-        formName: 'Đặt lịch tham quan nhà mẫu',
         submitText: 'Đặt lịch tham quan',
         successText: 'Đã nhận lịch hẹn! Chúng tôi sẽ gọi xác nhận trước một ngày.',
         fieldColor: '#13294a',

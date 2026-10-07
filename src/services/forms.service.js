@@ -131,17 +131,18 @@ async function telegramCall(token, method, payload) {
  * one got it, SLOW when it was sent but didn't answer in time, an error message when it failed,
  * undefined when not set.
  */
-export async function deliver(dest, { formName, page, values }) {
+export async function deliver(dest, { values }) {
   const time = vnTime();
   const jobs = {};
+  // Only what the visitor typed, and when: not the page or the form it came from.
   if (dest.sheet) {
-    const row = { 'Thời gian': time, Trang: page, Form: formName };
+    const row = { 'Thời gian': time };
     for (const v of values) row[v.label in row ? `${v.label} (2)` : v.label] = v.value;
     jobs.sheet = sendToSheet(dest.sheet, row);
   }
   if (dest.telegram) {
     const text =
-      `📩 <b>${esc(formName)}</b>\n🌐 ${esc(page)}\n\n` +
+      '📩 <b>Có thông tin mới</b>\n\n' +
       values.map((v) => `<b>${esc(v.label)}:</b> ${esc(v.value || '—')}`).join('\n') +
       `\n\n🕒 ${esc(time)}`;
     jobs.telegram = telegramCall(dest.telegram.token, 'sendMessage', { chat_id: dest.telegram.chatId, text, parse_mode: 'HTML', disable_web_page_preview: true });
