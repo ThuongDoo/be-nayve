@@ -1,4 +1,4 @@
-import { cleanValues, deliver, destinationOf, findForm, telegramChats } from '../services/forms.service.js';
+import { SLOW, cleanValues, deliver, destinationOf, findForm, telegramChats } from '../services/forms.service.js';
 import { httpError } from '../utils/httpError.js';
 
 // ---------------------------------------------------------------- public: forms on published pages
@@ -44,7 +44,7 @@ export const submitForm = async (req, res) => {
   const dest = destinationOf(props);
   if (!dest.sheet && !dest.telegram) throw httpError(409, 'Trang này chưa cài nơi nhận thông tin. Hãy liên hệ chủ trang bằng cách khác.');
   const result = await deliver(dest, { formName: props.formName || 'Form liên hệ', page: site.domain ?? '', values });
-  if (!Object.values(result).includes(true)) {
+  if (!Object.values(result).some((r) => r === true || r === SLOW)) {
     console.error(`Form ${body.form} of ${body.site} could not be delivered:`, result);
     throw httpError(502, 'Chưa gửi được, hãy thử lại sau.');
   }

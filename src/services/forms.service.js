@@ -84,13 +84,27 @@ export function cleanValues(values) {
   return out;
 }
 
+/**
+ * A delivery result: the destination got the request but didn't answer in time. Apps Script often
+ * takes long on its first run (and on every run of an older, slower script) while still adding the row,
+ * so this counts as sent: telling the visitor it failed would only make them send it twice.
+ */
+export const SLOW = 'slow';
+const SHEET_TIMEOUT_MS = 30_000;
+
 async function sendToSheet(url, row) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(row),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(row),
+      signal: AbortSignal.timeout(SHEET_TIMEOUT_MS),
+    });
+  } catch (e) {
+    if (e.name === 'TimeoutError') return SLOW;
+    throw e;
+  }
   const body = await res.text();
   if (!res.ok) throw new Error(`Google Sheet báo lỗi ${res.status}. Hãy kiểm tra lại đường dẫn Apps Script.`);
   // An Apps Script that isn't shared with "Anyone" answers with a sign-in page instead of the JSON.
@@ -114,7 +128,8 @@ async function telegramCall(token, method, payload) {
 
 /**
  * Passes a submission on to every destination set. Resolves to `{ sheet, telegram }`: true when that
- * one got it, an error message when it failed, undefined when not set.
+ * one got it, SLOW when it was sent but didn't answer in time, an error message when it failed,
+ * undefined when not set.
  */
 export async function deliver(dest, { formName, page, values }) {
   const time = vnTime();
@@ -133,7 +148,12 @@ export async function deliver(dest, { formName, page, values }) {
   }
   const names = Object.keys(jobs);
   const settled = await Promise.allSettled(Object.values(jobs));
-  return Object.fromEntries(names.map((n, i) => [n, settled[i].status === 'fulfilled' ? true : settled[i].reason?.message || 'Không gửi được']));
+  return Object.fromEntries(
+    names.map((n, i) => {
+      const s = settled[i];
+      return [n, s.status === 'fulfilled' ? (s.value === SLOW ? SLOW : true) : s.reason?.message || 'Không gửi được'];
+    }),
+  );
 }
 
 /** The chats a bot has seen messages in lately (to fill in the chat id): `[{ id, title }]`. */
