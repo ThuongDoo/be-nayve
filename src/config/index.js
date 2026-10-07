@@ -16,6 +16,9 @@ export const config = {
     token: process.env.VERCEL_TOKEN,
     teamId: process.env.VERCEL_TEAM_ID || undefined,
   },
+  // This API's public address including /api (e.g. https://api.example.com/api): published pages post
+  // their forms to it. Forms can't send while it is unset.
+  publicApiUrl: (process.env.PUBLIC_API_URL || '').replace(/\/+$/, '') || null,
   publish: {
     rootDomain: (process.env.PUBLISH_ROOT_DOMAIN || 'vercel.app').toLowerCase().replace(/^\.+|\.+$/g, ''),
   },

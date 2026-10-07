@@ -2,6 +2,7 @@
 import { AUDIO_PRESETS } from './audioViz.js'
 import { DECORS, decorPreset } from './decor.js'
 import { FONTS, fontStack } from './fonts.js'
+import { DEFAULT_FORM_FIELDS } from './form.js'
 import { firstColor, isGradient } from './gradient.js'
 import { SHAPES, randomSeed } from './shapes.js'
 
@@ -179,9 +180,32 @@ export const ELEMENT_TYPES = {
     initProps: () => ({ seed: randomSeed() }),
     style: { background: 'transparent', radius: 0 },
   },
+  form: {
+    label: 'Form liên hệ',
+    w: 420,
+    h: 440,
+    // See form.js. fields: [{ id, label, type, required, placeholder, options }]. sheetUrl / telegram*:
+    // where submissions go (never written into published HTML).
+    props: {
+      formName: 'Form liên hệ',
+      fields: DEFAULT_FORM_FIELDS,
+      submitText: 'Gửi thông tin',
+      successText: 'Cảm ơn bạn! Chúng tôi sẽ liên hệ lại sớm.',
+      fieldColor: '#ffffff',
+      fieldTextColor: '#111827',
+      fieldBorderColor: '#d1d5db',
+      fieldRadius: 10,
+      accentColor: '#4f46e5',
+      accentTextColor: '#ffffff',
+      sheetUrl: '',
+      telegramToken: '',
+      telegramChatId: '',
+    },
+    style: { background: '#ffffff', radius: 16, padding: 24, shadow: 'md', fontSize: 15 },
+  },
 }
 
-export const PALETTE_ORDER = ['image', 'parallax', 'box', 'divider', 'video']
+export const PALETTE_ORDER = ['image', 'parallax', 'box', 'divider', 'video', 'form']
 
 /**
  * The text group in the palette (`text:<preset>`): ready-made heading/paragraph elements that only
@@ -476,6 +500,19 @@ export function contentStyle(el) {
   }
   if (el.type === 'divider') {
     Object.assign(css, { display: 'flex', alignItems: 'center' })
+  }
+  if (el.type === 'form') {
+    // Its fields inherit the font; a form taller than its box spills over it (resize the box to fit)
+    // rather than being cut off or showing a scrollbar.
+    Object.assign(css, {
+      position: 'relative',
+      color: firstColor(s.color),
+      fontFamily: fontStack(s.fontFamily),
+      fontSize: s.fontSize,
+      lineHeight: 1.4,
+      textAlign: 'left',
+      overflow: 'visible',
+    })
   }
   if (el.type === 'icon') {
     Object.assign(css, { display: 'flex', alignItems: 'center', justifyContent: 'center' })

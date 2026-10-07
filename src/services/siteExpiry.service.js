@@ -105,7 +105,7 @@ export async function extendSite(uid, months, by) {
       // design as the user last saved it.
       const design = site.design ?? (await db.doc(`users/${uid}/designs/${site.designId}`).get()).data();
       if (!design) throw httpError(409, 'Không tìm thấy thiết kế để khôi phục trang');
-      const { files } = await buildSiteFiles({ page: design.page, elements: design.elements });
+      const { files } = await buildSiteFiles({ page: design.page, elements: design.elements }, { projectName: site.projectName });
       Object.assign(patch, { expired: false, expiredAt: null, ...statusOf(await deployStatic(site.projectName, files), site.domain) });
     }
     await ref.update(patch);

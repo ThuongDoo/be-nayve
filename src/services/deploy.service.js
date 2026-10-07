@@ -7,6 +7,7 @@ import { addProjectDomain, deleteProject, deployStatic, getDeployment, removePro
 import { fullDomain } from './domain.service.js';
 import { bundleImages } from './assets.service.js';
 import { httpError } from '../utils/httpError.js';
+import { config } from '../config/index.js';
 
 /**
  * One published site per user, served at their domain. Each published design gets its own Vercel
@@ -59,10 +60,20 @@ export const serializeSite = ({ design: _design, ...record }) => ({
 });
 const serialize = serializeSite;
 
-/** Renders `design` ({ page, elements }) to HTML, throwing 422 if the data is unusable. */
-export function renderDesign(design) {
+/**
+ * Where the forms of the site in Vercel project `projectName` post to (see lib/render/form.js and
+ * forms.service.js), or null while PUBLIC_API_URL isn't set: the forms then say they can't send.
+ */
+export const formsFor = (projectName) =>
+  config.publicApiUrl && projectName ? { endpoint: `${config.publicApiUrl}/forms/submit`, site: projectName } : null;
+
+/**
+ * Renders `design` ({ page, elements }) to HTML, throwing 422 if the data is unusable. `projectName`:
+ * the Vercel project it is deployed to, which its forms name when they post.
+ */
+export function renderDesign(design, { projectName } = {}) {
   try {
-    return exportHtml(normalizeDoc(design));
+    return exportHtml(normalizeDoc(design), { forms: formsFor(projectName) });
   } catch {
     throw httpError(422, 'Dữ liệu thiết kế không hợp lệ');
   }
@@ -89,10 +100,13 @@ async function attachFreedDomain(project, domain) {
   }
 }
 
-/** The files of a site built from `design`: its HTML plus the images copied next to it. */
-export async function buildSiteFiles(design) {
+/**
+ * The files of a site built from `design`: its HTML plus the images copied next to it. `projectName`:
+ * the Vercel project they go to (see renderDesign).
+ */
+export async function buildSiteFiles(design, { projectName } = {}) {
   const { design: bundled, files, missing } = await bundleImages(design);
-  return { files: { 'index.html': renderDesign(bundled), ...files }, missing };
+  return { files: { 'index.html': renderDesign(bundled, { projectName }), ...files }, missing };
 }
 
 /**
@@ -102,11 +116,13 @@ export async function buildSiteFiles(design) {
  */
 export async function deploySite(uid, designId, design, name) {
   renderDesign(design); // Fail on bad data before touching anything.
-  // Images are copied into the deployment before the old site is removed, so a failure here leaves it up.
-  const { files, missing } = await buildSiteFiles(design);
   const domain = fullDomain(name);
   const ref = siteRef(uid);
   const current = (await ref.get()).data();
+  // Updating the live design keeps its project; another design gets its own (decided below too).
+  const target = current?.designId === designId ? current.projectName : projectNameFor(uid, designId);
+  // Images are copied into the deployment before the old site is removed, so a failure here leaves it up.
+  const { files, missing } = await buildSiteFiles(design, { projectName: target });
   // Dates and marks carry over from the live site, or from one taken down when its design was deleted.
   const previous = current ?? (await retiredRef(uid).get()).data();
   // A trial from now, unless an admin already extended the site further (a paid site keeps its date,

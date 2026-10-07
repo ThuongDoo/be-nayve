@@ -75,8 +75,9 @@ export async function deployAdminSite(uid, designId, rawName) {
     const ref = adminSiteRef(uid, designId);
     const current = (await ref.get()).data();
     const moving = current?.name !== name;
+    const projectName = current?.projectName ?? projectNameFor(uid, designId);
     // Fails on bad data before a name is reserved or anything changes on Vercel.
-    const { files, missing } = await buildSiteFiles(design);
+    const { files, missing } = await buildSiteFiles(design, { projectName });
 
     const nameRef = domainsCol().doc(name);
     let reserved = false;
@@ -95,7 +96,6 @@ export async function deployAdminSite(uid, designId, rawName) {
       });
     }
 
-    const projectName = current?.projectName ?? projectNameFor(uid, designId);
     const domain = fullDomain(name);
     let d;
     try {

@@ -38,6 +38,7 @@ import {
   revokeAdminSite,
   saveAdminSiteLabels,
 } from '../controllers/site.controller.js';
+import { findTelegramChats, testForm } from '../controllers/forms.controller.js';
 import { requireAdmin, requireAuth } from '../middlewares/auth.middleware.js';
 
 const router = Router();
@@ -63,6 +64,10 @@ router.post('/me/storage/files/delete', requireAuth, deleteMyFiles);
 router.post('/admin/storage/cleanup', ...admin, cleanupAllStorage);
 
 // Users ask for a page to be published on their domain; it only goes live once an admin approves it.
+// Contact forms: checking where a form sends before publishing (published pages post to routes/forms.routes.js).
+router.post('/me/forms/test', requireAuth, testForm);
+router.post('/me/forms/telegram-chats', requireAuth, findTelegramChats);
+
 router.post('/designs/:designId/publish', requireAuth, requestPublish);
 router.get('/designs/:designId/publish', requireAuth, getPublishStatus);
 router.delete('/designs/:designId/publish', requireAuth, cancelPublish);
