@@ -4,6 +4,7 @@ import { buildSiteFiles, serializeSite, siteRef } from './deploy.service.js';
 import { withSiteLock } from './siteLock.service.js';
 import { deployStatic } from './vercel.service.js';
 import { httpError } from '../utils/httpError.js';
+import { config } from '../config/index.js';
 
 /**
  * Site expiry (see deploy.service.js): a site past its `expiresAt` is swapped for a notice page, keeping
@@ -32,13 +33,14 @@ const expiredPage = (site) => `<!doctype html>
             background: #fef3c7; color: #b45309; font-size: 34px; }
     h1 { margin: 0 0 10px; font-size: 26px; }
     p { margin: 0; color: #64748b; font-size: 17px; line-height: 1.6; }
+    a { color: #4f46e5; font-weight: 600; }
   </style>
 </head>
 <body>
   <div class="box">
     <div class="icon">⏳</div>
     <h1>Trang web đã hết hạn</h1>
-    <p>${esc(site.domain)} đang tạm ngưng. Nếu bạn là chủ trang, hãy liên hệ quản trị viên để gia hạn.</p>
+    <p>${esc(site.domain)} đang tạm ngưng. ${config.appUrl ? `Nếu bạn là chủ trang, hãy <a href="${esc(config.appUrl)}">đăng nhập để gia hạn</a>.` : 'Nếu bạn là chủ trang, hãy liên hệ quản trị viên để gia hạn.'}</p>
   </div>
 </body>
 </html>

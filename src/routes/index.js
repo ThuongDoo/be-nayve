@@ -39,6 +39,7 @@ import {
   saveAdminSiteLabels,
 } from '../controllers/site.controller.js';
 import { findTelegramChats, testForm } from '../controllers/forms.controller.js';
+import { createMyRenewOrder, getMyRenewOrder, getRenewPlans, sepayIpn } from '../controllers/payment.controller.js';
 import { requireAdmin, requireAuth } from '../middlewares/auth.middleware.js';
 
 const router = Router();
@@ -89,6 +90,11 @@ router.get('/admin/sites', ...admin, listAdminSites);
 router.post('/admin/sites/expire-due', ...admin, expireAdminSites);
 router.post('/admin/sites/:uid/extend', ...admin, extendAdminSite);
 router.post('/admin/sites/:uid/revoke', ...admin, revokeAdminSite);
+// Users renewing their site themselves: an order is paid on SePay, whose IPN extends the site.
+router.get('/me/renew-plans', requireAuth, getRenewPlans);
+router.post('/me/renew-orders', requireAuth, createMyRenewOrder);
+router.get('/me/renew-orders/:id', requireAuth, getMyRenewOrder);
+router.post('/payments/sepay/ipn', sepayIpn);
 // Stars and labels admins put on sites to keep track of them (like Gmail's).
 router.patch('/admin/sites/:uid/marks', ...admin, markAdminSite);
 router.put('/admin/site-labels', ...admin, saveAdminSiteLabels);
