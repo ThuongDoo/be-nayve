@@ -10,7 +10,8 @@ import { httpError } from '../utils/httpError.js';
 /**
  * Users renewing their own site through the SePay payment gateway, instead of paying an admin who then
  * extends it by hand. An order is `renewOrders/{invoice}` ({ uid, months, amount, status, … });
- * SePay calls handleSepayIpn when it is paid, which extends the site like an admin would.
+ * SePay calls handleSepayIpn when it is paid, which extends the site like an admin would. In case the
+ * IPN is late or can't reach us, getRenewOrder (the user's page waiting after paying) also asks SePay.
  *
  * status: 'pending' (created, not paid) → 'applying' (paid, extending the site) → 'paid'. 'failed': paid
  * but the site could not be extended yet (e.g. it was busy); it is tried again on the next IPN retry
@@ -129,34 +130,76 @@ export async function handleSepayIpn(secret, body) {
     console.warn(`SePay IPN for unknown order ${id}`);
     return;
   }
-
-  const paid = Math.round(Number(body.order.order_amount));
-  const payment = {
-    sepayOrderId: body.order.order_id ?? null,
-    transactionId: body.transaction?.transaction_id ?? null,
-    paidAmount: paid,
-    paidAt: FieldValue.serverTimestamp(),
-  };
-  if (body.order.order_status !== 'CAPTURED' || body.order.order_currency !== 'VND' || paid !== order.amount) {
-    // Not paid in full: keep it for an admin to sort out rather than extending the site.
-    console.error(`SePay IPN for ${id} does not match the order:`, body.order.order_status, body.order.order_currency, paid, order.amount);
-    if (order.status === 'pending') await ref.update({ ...payment, status: 'mismatch' });
-    return;
-  }
-  if (order.status === 'pending') await ref.update(payment);
-  await applyPaidOrder(id);
+  await recordPayment(id, order, body.order, body.transaction?.transaction_id, 'ipn');
 }
 
 /**
- * `{ id, status, months, amount, expiresAt }` for one of the user's orders. A paid order whose site
- * could not be extended yet is tried again here.
+ * Takes SePay's word on order `id` (`sepayOrder`: the `order` of an IPN, or the order detail from the
+ * API) and, if it was paid in full, extends the site. Paid but not in full (wrong amount or currency):
+ * kept as 'mismatch' for an admin to sort out rather than extending the site. Not paid yet: nothing.
+ */
+async function recordPayment(id, order, sepayOrder, transactionId, via) {
+  if (sepayOrder?.order_status !== 'CAPTURED') return;
+  if (order.status === 'pending') {
+    const paid = Math.round(Number(sepayOrder.order_amount));
+    const payment = {
+      sepayOrderId: sepayOrder.order_id ?? null,
+      transactionId: transactionId ?? null,
+      paidAmount: paid,
+      paidAt: FieldValue.serverTimestamp(),
+      paidVia: via,
+    };
+    if (sepayOrder.order_currency !== 'VND' || paid !== order.amount) {
+      console.error(`SePay payment for ${id} does not match the order:`, sepayOrder.order_currency, paid, order.amount);
+      await orderRef(id).update({ ...payment, status: 'mismatch' });
+      return;
+    }
+    await orderRef(id).update(payment);
+  } else if (order.status === 'mismatch') {
+    return;
+  }
+  await applyPaidOrder(id);
+}
+
+/** Don't ask SePay about the same order more often than this (the user's page checks every few seconds). */
+const LOOKUP_EVERY_MS = 8000;
+const lastLookup = new Map();
+
+/**
+ * Asks SePay whether pending order `id` has been paid, in case its IPN hasn't arrived (it is late, or
+ * can't reach this server, e.g. while developing on localhost), and records the payment if so.
+ */
+async function lookUpPayment(id, order) {
+  const now = Date.now();
+  if (now - (lastLookup.get(id) ?? 0) < LOOKUP_EVERY_MS) return;
+  lastLookup.set(id, now);
+  for (const [key, at] of lastLookup) if (now - at > 10 * 60_000) lastLookup.delete(key);
+
+  let detail;
+  try {
+    // The SDK looks orders up by our invoice number.
+    detail = (await sepay().order.retrieve(id)).data?.data;
+  } catch (e) {
+    // Not found until the user has opened SePay's checkout page; anything else is logged.
+    if (e.response?.status !== 404) console.error(`Could not look up SePay order ${id}:`, e.response?.status ?? '', e.message);
+    return;
+  }
+  const paidTx = detail?.transactions?.find((t) => t.transaction_status === 'APPROVED');
+  await recordPayment(id, order, detail, paidTx?.id, 'lookup');
+}
+
+/**
+ * `{ id, status, months, amount, expiresAt }` for one of the user's orders. A pending order is checked
+ * with SePay, and a paid order whose site could not be extended yet is tried again.
  */
 export async function getRenewOrder(uid, id) {
   const ref = orderRef(id);
   let order = (await ref.get()).data();
   if (!order || order.uid !== uid) throw httpError(404, 'Không tìm thấy đơn gia hạn');
-  if (order.status === 'failed') {
-    await applyPaidOrder(id).catch(() => {});
+  if (order.status === 'pending' || order.status === 'failed') {
+    await (order.status === 'pending' ? lookUpPayment(id, order) : applyPaidOrder(id)).catch((e) =>
+      console.error(`Could not settle renew order ${id}:`, e.message),
+    );
     order = (await ref.get()).data();
   }
   return {
