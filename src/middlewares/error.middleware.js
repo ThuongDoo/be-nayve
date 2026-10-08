@@ -9,6 +9,8 @@ export const errorHandler = (err, req, res, next) => {
   const status = err.status || 500;
   res.status(status).json({
     message: err.message || 'Internal Server Error',
+    // A machine-readable reason, for errors the app reacts to (e.g. payment.service.js).
+    ...(err.status && err.code && { code: err.code }),
     ...(config.nodeEnv === 'development' && { stack: err.stack }),
   });
 };

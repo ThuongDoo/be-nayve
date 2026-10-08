@@ -15,7 +15,14 @@ import { httpError } from '../utils/httpError.js';
  *
  * status: 'pending' (created, not paid) → 'applying' (paid, extending the site) → 'paid'. 'failed': paid
  * but the site could not be extended yet (e.g. it was busy); it is tried again on the next IPN retry
- * or when the user checks the order.
+ * or when the user checks the order. 'cancelled': replaced by a newer order before it was paid (also
+ * cancelled on SePay so its QR can't be paid); if money still comes in for it, the site is extended.
+ * 'mismatch': paid, but not the amount asked for; left for an admin, who accepts it (extends the site)
+ * or closes it as 'dismissed' (e.g. refunded).
+ *
+ * Against paying twice by mistake, a new order first settles the user's pending ones: one that turns
+ * out paid stops it (ALREADY_PAID), the rest are cancelled. Right after a renewal, another one needs
+ * the user to confirm (RECENTLY_PAID).
  */
 
 const orderRef = (id) => db.doc(`renewOrders/${id}`);
@@ -37,16 +44,62 @@ export function renewPlans() {
 /** A unique, unguessable invoice number SePay accepts: letters and digits only. */
 const newInvoice = () => `NV${Date.now().toString(36)}${randomBytes(4).toString('hex')}`.toUpperCase();
 
+/** A renewal this recent makes another one ask the user first (RECENTLY_PAID). */
+const RECENT_PAYMENT_MS = 15 * 60_000;
+
+const formatDate = (d) => d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'Asia/Ho_Chi_Minh' });
+const errorWithCode = (status, code, message) => Object.assign(httpError(status, message), { code });
+
+/**
+ * Before a new order: the user's pending orders are checked with SePay. One that was paid after all is
+ * recorded and stops the new order (ALREADY_PAID); the others are cancelled, here and on SePay, so an
+ * old checkout page left open can't be paid as well. Then, unless `force`, a renewal paid in the last
+ * minutes stops it too (RECENTLY_PAID), for the user to confirm they want another one.
+ */
+async function settleEarlierOrders(uid, force) {
+  const snap = await db.collection('renewOrders').where('uid', '==', uid).get();
+  const orders = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  for (const o of orders.filter((x) => x.status === 'pending')) {
+    await lookUpPayment(o.id, o, { force: true }).catch((e) => console.error(`Could not settle renew order ${o.id}:`, e.message));
+    const now = (await orderRef(o.id).get()).data();
+    if (now.status !== 'pending') {
+      const until = now.expiresAt ? `, đến ${formatDate(now.expiresAt.toDate())}` : '';
+      throw errorWithCode(409, 'ALREADY_PAID', `Đơn gia hạn ${o.months} tháng bạn tạo trước đó đã được thanh toán, trang đã được gia hạn${until}. Bạn không cần thanh toán lại.`);
+    }
+    try {
+      await sepay().order.cancel(o.id);
+    } catch (e) {
+      // 404: the user never opened SePay's checkout for it, so there is nothing there to pay.
+      if (e.response?.status !== 404) {
+        console.error(`Could not cancel SePay order ${o.id}:`, e.response?.status ?? '', e.message);
+        continue; // Left pending: if it does get paid, it still extends the site.
+      }
+    }
+    await orderRef(o.id).update({ status: 'cancelled', cancelledAt: FieldValue.serverTimestamp() });
+  }
+
+  if (force) return;
+  const recent = orders
+    .filter((o) => ['paid', 'applying', 'failed'].includes(o.status) && o.paidAt && Date.now() - o.paidAt.toMillis() < RECENT_PAYMENT_MS)
+    .sort((a, b) => b.paidAt.toMillis() - a.paidAt.toMillis())[0];
+  if (recent) {
+    const at = recent.paidAt.toDate().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Ho_Chi_Minh' });
+    throw errorWithCode(409, 'RECENTLY_PAID', `Bạn vừa thanh toán gia hạn ${recent.months} tháng lúc ${at}. Thanh toán thêm sẽ cộng dồn thời gian.`);
+  }
+}
+
 /**
  * Creates an order to renew the user's site by `months` and returns what the browser posts to SePay:
- * `{ orderId, checkoutUrl, fields }`.
+ * `{ orderId, checkoutUrl, fields }`. `force`: the user confirmed paying again right after a renewal.
  */
-export async function createRenewOrder(uid, months) {
+export async function createRenewOrder(uid, months, { force = false } = {}) {
   if (!enabled()) throw httpError(503, 'Chưa bật thanh toán trực tuyến. Hãy liên hệ quản trị viên để gia hạn.');
   const amount = config.renewPrices[months];
   if (!EXTEND_MONTHS.includes(months) || !amount) throw httpError(400, 'Gói gia hạn không hợp lệ');
   const site = (await siteRef(uid).get()).data();
   if (!site) throw httpError(404, 'Bạn chưa có trang web nào được xuất bản để gia hạn');
+  await settleEarlierOrders(uid, force);
 
   const id = newInvoice();
   const description = `Gia han ${site.domain} ${months} thang`;
@@ -78,13 +131,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * only the one that moves the order to 'applying' does the work. The site may be busy with another
  * change (409): retried a few times, then left 'failed' for the next attempt.
  */
-async function applyPaidOrder(id) {
+async function applyPaidOrder(id, { also = [] } = {}) {
   const ref = orderRef(id);
   const claimed = await db.runTransaction(async (t) => {
     const o = (await t.get(ref)).data();
     if (!o) return false;
     const stale = o.status === 'applying' && Date.now() - (o.applyingAt?.toMillis() ?? 0) > STALE_APPLYING_MS;
-    if (o.status !== 'pending' && o.status !== 'failed' && !stale) return false;
+    // 'cancelled' too: only reached once SePay says it was paid (recordPayment), so the money is in.
+    // `also`: statuses an admin may push through by hand (a 'mismatch' payment they accept).
+    if (![...['pending', 'failed', 'cancelled'], ...also].includes(o.status) && !stale) return false;
     t.update(ref, { status: 'applying', applyingAt: FieldValue.serverTimestamp() });
     return true;
   });
@@ -140,7 +195,8 @@ export async function handleSepayIpn(secret, body) {
  */
 async function recordPayment(id, order, sepayOrder, transactionId, via) {
   if (sepayOrder?.order_status !== 'CAPTURED') return;
-  if (order.status === 'pending') {
+  // A cancelled order paid anyway (its QR was paid before the cancel reached SePay) still counts.
+  if (order.status === 'pending' || order.status === 'cancelled') {
     const paid = Math.round(Number(sepayOrder.order_amount));
     const payment = {
       sepayOrderId: sepayOrder.order_id ?? null,
@@ -169,9 +225,9 @@ const lastLookup = new Map();
  * Asks SePay whether pending order `id` has been paid, in case its IPN hasn't arrived (it is late, or
  * can't reach this server, e.g. while developing on localhost), and records the payment if so.
  */
-async function lookUpPayment(id, order) {
+async function lookUpPayment(id, order, { force = false } = {}) {
   const now = Date.now();
-  if (now - (lastLookup.get(id) ?? 0) < LOOKUP_EVERY_MS) return;
+  if (!force && now - (lastLookup.get(id) ?? 0) < LOOKUP_EVERY_MS) return;
   lastLookup.set(id, now);
   for (const [key, at] of lastLookup) if (now - at > 10 * 60_000) lastLookup.delete(key);
 
@@ -189,15 +245,16 @@ async function lookUpPayment(id, order) {
 }
 
 /**
- * `{ id, status, months, amount, expiresAt }` for one of the user's orders. A pending order is checked
+ * `{ id, status, months, amount, expiresAt }` for one of the user's orders. A pending (or cancelled) order is checked
  * with SePay, and a paid order whose site could not be extended yet is tried again.
  */
 export async function getRenewOrder(uid, id) {
   const ref = orderRef(id);
   let order = (await ref.get()).data();
   if (!order || order.uid !== uid) throw httpError(404, 'Không tìm thấy đơn gia hạn');
-  if (order.status === 'pending' || order.status === 'failed') {
-    await (order.status === 'pending' ? lookUpPayment(id, order) : applyPaidOrder(id)).catch((e) =>
+  // 'cancelled' too: the user may have paid an old checkout page before it was cancelled.
+  if (['pending', 'cancelled', 'failed'].includes(order.status)) {
+    await (order.status !== 'failed' ? lookUpPayment(id, order) : applyPaidOrder(id)).catch((e) =>
       console.error(`Could not settle renew order ${id}:`, e.message),
     );
     order = (await ref.get()).data();
@@ -208,5 +265,91 @@ export async function getRenewOrder(uid, id) {
     months: order.months,
     amount: order.amount,
     expiresAt: order.expiresAt?.toDate().toISOString() ?? null,
+  };
+}
+
+// ---------------------------------------------------------------- admin
+
+const iso = (t) => t?.toDate?.().toISOString() ?? null;
+
+const serializeOrder = (id, o) => ({
+  id,
+  uid: o.uid,
+  months: o.months,
+  amount: o.amount,
+  domain: o.domain ?? null,
+  status: o.status,
+  error: o.error ?? null,
+  paidAmount: o.paidAmount ?? null,
+  paidVia: o.paidVia ?? null,
+  transactionId: o.transactionId ?? null,
+  sepayOrderId: o.sepayOrderId ?? null,
+  note: o.note ?? null,
+  createdAt: iso(o.createdAt),
+  paidAt: iso(o.paidAt),
+  appliedAt: iso(o.appliedAt),
+  cancelledAt: iso(o.cancelledAt),
+  resolvedAt: iso(o.resolvedAt),
+  expiresAt: iso(o.expiresAt),
+});
+
+/** The latest renew orders (newest first) with their owner (`user: { name, email, picture }`). */
+export async function listRenewOrders({ limit = 1000 } = {}) {
+  const snap = await db.collection('renewOrders').orderBy('createdAt', 'desc').limit(limit).get();
+  const uids = [...new Set(snap.docs.map((d) => d.get('uid')).filter(Boolean))];
+  const owners = uids.length ? await db.getAll(...uids.map((u) => db.doc(`users/${u}`)), { fieldMask: ['displayName', 'email', 'photoURL'] }) : [];
+  const byUid = Object.fromEntries(owners.map((u) => [u.id, u.data() ?? {}]));
+  return snap.docs.map((d) => {
+    const u = byUid[d.get('uid')] ?? {};
+    return { ...serializeOrder(d.id, d.data()), user: { name: u.displayName ?? null, email: u.email ?? null, picture: u.photoURL ?? null } };
+  });
+}
+
+/**
+ * Admin: settles order `id` now. Pending / cancelled: asks SePay whether it was paid. Failed (paid, site
+ * not extended): extends it again. Resolves to the order as it is afterwards.
+ */
+export async function recheckRenewOrder(id) {
+  const ref = orderRef(id);
+  const order = (await ref.get()).data();
+  if (!order) throw httpError(404, 'Không tìm thấy đơn');
+  if (order.status === 'pending' || order.status === 'cancelled') await lookUpPayment(id, order, { force: true });
+  else if (order.status === 'failed' || order.status === 'applying') await applyPaidOrder(id);
+  else throw httpError(409, 'Đơn này không cần kiểm tra lại');
+  return serializeOrder(id, (await ref.get()).data());
+}
+
+/**
+ * Admin, for a 'mismatch' order (paid, but not the amount asked): `extend` accepts the payment and
+ * extends the site as ordered; `dismiss` closes it (e.g. refunded) without extending. `note` is kept.
+ */
+export async function resolveRenewOrder(id, action, note, by) {
+  const ref = orderRef(id);
+  const order = (await ref.get()).data();
+  if (!order) throw httpError(404, 'Không tìm thấy đơn');
+  if (order.status !== 'mismatch') throw httpError(409, 'Chỉ xử lý tay được đơn sai số tiền');
+  const resolved = { note: String(note ?? '').slice(0, 500) || null, resolvedBy: by, resolvedAt: FieldValue.serverTimestamp() };
+  if (action === 'extend') {
+    await ref.update(resolved);
+    await applyPaidOrder(id, { also: ['mismatch'] });
+  } else if (action === 'dismiss') {
+    await ref.update({ ...resolved, status: 'dismissed' });
+  } else {
+    throw httpError(400, 'Thao tác không hợp lệ');
+  }
+  return serializeOrder(id, (await ref.get()).data());
+}
+
+/** Admin: whether online payment works and how it is set up (no secrets). */
+export function paymentSettings() {
+  const { merchantId, env, secretKey, ipnSecret } = config.sepay;
+  return {
+    ...renewPlans(),
+    env,
+    merchantId: merchantId ? `${merchantId.slice(0, 4)}…${merchantId.slice(-2)}` : null,
+    hasSecretKey: !!secretKey,
+    separateIpnSecret: !!ipnSecret && ipnSecret !== secretKey,
+    appUrl: config.appUrl,
+    ipnUrl: config.publicApiUrl ? `${config.publicApiUrl}/payments/sepay/ipn` : null,
   };
 }

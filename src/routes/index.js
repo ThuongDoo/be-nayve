@@ -39,7 +39,15 @@ import {
   saveAdminSiteLabels,
 } from '../controllers/site.controller.js';
 import { findTelegramChats, testForm } from '../controllers/forms.controller.js';
-import { createMyRenewOrder, getMyRenewOrder, getRenewPlans, sepayIpn } from '../controllers/payment.controller.js';
+import {
+  createMyRenewOrder,
+  getMyRenewOrder,
+  getRenewPlans,
+  listAdminRenewOrders,
+  recheckAdminRenewOrder,
+  resolveAdminRenewOrder,
+  sepayIpn,
+} from '../controllers/payment.controller.js';
 import { requireAdmin, requireAuth } from '../middlewares/auth.middleware.js';
 
 const router = Router();
@@ -95,6 +103,9 @@ router.get('/me/renew-plans', requireAuth, getRenewPlans);
 router.post('/me/renew-orders', requireAuth, createMyRenewOrder);
 router.get('/me/renew-orders/:id', requireAuth, getMyRenewOrder);
 router.post('/payments/sepay/ipn', sepayIpn);
+router.get('/admin/renew-orders', ...admin, listAdminRenewOrders);
+router.post('/admin/renew-orders/:id/recheck', ...admin, recheckAdminRenewOrder);
+router.post('/admin/renew-orders/:id/resolve', ...admin, resolveAdminRenewOrder);
 // Stars and labels admins put on sites to keep track of them (like Gmail's).
 router.patch('/admin/sites/:uid/marks', ...admin, markAdminSite);
 router.put('/admin/site-labels', ...admin, saveAdminSiteLabels);
